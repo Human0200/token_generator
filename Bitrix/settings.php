@@ -2,10 +2,10 @@
 
 define('C_REST_CLIENT_ID', '1'); // Application ID
 define('C_REST_CLIENT_SECRET', '1'); // Application key
-define('DB_HOST', 'v90860qz.beget.tech');
-define('DB_NAME', 'v90860qz_app');
-define('DB_USER', 'v90860qz_app');
-define('DB_PASS', 'Ilovework123_');
+define('DB_HOST', '');
+define('DB_NAME', '');
+define('DB_USER', '');
+define('DB_PASS', '');
 // or
 // define('C_REST_WEB_HOOK_URL','https://rest-course.bitrix24.ru/rest/1/ррррррр/');//url on creat Webhook
 
