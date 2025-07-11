@@ -17,6 +17,8 @@ coverage
 /cypress/videos/
 /cypress/screenshots/
 
+/app-vue/dist/*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -28,3 +30,4 @@ coverage
 *.sw?
 
 *.tsbuildinfo
+
