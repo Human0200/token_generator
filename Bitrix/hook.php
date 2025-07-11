@@ -2,10 +2,10 @@
 header('Content-Type: application/json');
 
 // Конфигурация
-define('DB_HOST', 'v90860qz.beget.tech');
+define('DB_HOST', '');
 define('DB_NAME', 'v90860qz_app');
-define('DB_USER', 'v90860qz_app');
-define('DB_PASS', 'Ilovework123_');
+define('DB_USER', '');
+define('DB_PASS', '');
 define('LOG_FILE', __DIR__ . '/bitrix_api.log');
 define('BITRIX_OAUTH_URL', 'https://oauth.bitrix.info/oauth/token/');
 
