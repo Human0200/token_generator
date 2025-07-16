@@ -3,11 +3,14 @@ header('Content-Type: application/json');
 
 // Конфигурация
 define('DB_HOST', '');
-define('DB_NAME', 'v90860qz_app');
+define('DB_NAME', '');
 define('DB_USER', '');
 define('DB_PASS', '');
 define('LOG_FILE', __DIR__ . '/bitrix_api.log');
-define('BITRIX_OAUTH_URL', 'https://oauth.bitrix.info/oauth/token/');
+define('BITRIX_OAUTH_URL', 'https://oauth.bitrix24.tech/oauth/token/');
+
+// Include settings file with client credentials
+require_once __DIR__ . '/settings.php';
 
 // Функция для логирования
 function logError($message, $context = []) {
@@ -60,22 +63,24 @@ function makeCurlRequest($url, $method = 'GET', $params = [], $headers = []) {
     ];
 }
 
-// Получаем параметры запроса
-$domain = $_GET['domain'] ?? '';
-$method = $_GET['method'] ?? '';
-$rawParams = $_GET['params'] ?? '[]';
-$params = json_decode($rawParams, true) ?: [];
+// Получаем параметры запроса из POST данных
+$input = file_get_contents('php://input');
+$requestData = json_decode($input, true) ?: [];
+
+$domain = $requestData['domain'] ?? '';
+$method = $requestData['method'] ?? '';
+$params = $requestData['params'] ?? [];
 
 // Валидация входных данных
 if (empty($domain)) {
     $error = 'Domain parameter is required';
-    logError($error, ['request' => $_GET]);
+    logError($error, ['request' => $requestData]);
     die(json_encode(['error' => $error]));
 }
 
 if (empty($method)) {
     $error = 'Method parameter is required';
-    logError($error, ['request' => $_GET]);
+    logError($error, ['request' => $requestData]);
     die(json_encode(['error' => $error]));
 }
 
@@ -102,8 +107,7 @@ try {
     // 1. Ищем токен в БД по домену
     try {
         $stmt = $dbh->prepare("
-            SELECT `access_token`, `refresh_token`, `token_expires`, 
-                   `client_id`, `client_secret`
+            SELECT `access_token`, `refresh_token`, `token_expires`
             FROM `bitrix_integration_tokens` 
             WHERE `domain` = ? 
             LIMIT 1
@@ -114,6 +118,14 @@ try {
         if (!$tokenData) {
             throw new Exception("No tokens found for domain: $domain");
         }
+        
+        // Добавляем client_id и client_secret из настроек
+        $tokenData['client_id'] = defined('C_REST_CLIENT_ID') ? C_REST_CLIENT_ID : '';
+        $tokenData['client_secret'] = defined('C_REST_CLIENT_SECRET') ? C_REST_CLIENT_SECRET : '';
+        
+        if (empty($tokenData['client_id']) || empty($tokenData['client_secret'])) {
+            throw new Exception("Client credentials are not configured properly");
+        }
     } catch (PDOException $e) {
         logError('Database query error', [
             'error' => $e->getMessage(),
@@ -123,12 +135,16 @@ try {
     }
 
     // 2. Проверяем и обновляем access_token при необходимости
-    $needTokenRefresh = time() >= $tokenData['token_expires'];
+    $needTokenRefresh = time() >= ($tokenData['token_expires'] - 300);
     $accessToken = $tokenData['access_token'];
 
     if ($needTokenRefresh) {
         try {
-            logError('Attempting token refresh', ['domain' => $domain]);
+            logError('Attempting token refresh', [
+                'domain' => $domain,
+                'current_time' => time(),
+                'expires_at' => $tokenData['token_expires']
+            ]);
             
             $refreshParams = [
                 'grant_type' => 'refresh_token',
@@ -139,14 +155,20 @@ try {
             
             $result = makeCurlRequest(BITRIX_OAUTH_URL, 'GET', $refreshParams);
             
+            logError('Token refresh response', [
+                'domain' => $domain,
+                'http_code' => $result['http_code'],
+                'response' => $result['response']
+            ]);
+            
             if ($result['http_code'] != 200) {
-                throw new Exception("HTTP code: " . $result['http_code']);
+                throw new Exception("HTTP code: " . $result['http_code'] . ", Response: " . $result['response']);
             }
             
             $newTokens = json_decode($result['response'], true);
             
             if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new Exception("Invalid JSON response from token refresh");
+                throw new Exception("Invalid JSON response from token refresh: " . json_last_error_msg());
             }
 
             if (isset($newTokens['error'])) {
@@ -156,10 +178,19 @@ try {
                     'domain' => $domain
                 ]);
                 
-                if ($newTokens['error'] === 'invalid_grant') {
+                if (in_array($newTokens['error'], ['invalid_grant', 'expired_token'])) {
                     throw new Exception("Refresh token expired. Reinstall the app.");
                 }
+                
+                if ($newTokens['error'] === 'PAYMENT_REQUIRED') {
+                    throw new Exception("Payment required for this portal.");
+                }
+                
                 throw new Exception("Token refresh failed: " . ($newTokens['error_description'] ?? $newTokens['error']));
+            }
+
+            if (!isset($newTokens['access_token']) || !isset($newTokens['expires_in'])) {
+                throw new Exception("Invalid token response: missing required fields");
             }
 
             // Обновляем данные в БД
@@ -172,11 +203,13 @@ try {
                     WHERE `domain` = ?
                 ");
                 
-                $newExpires = time() + $newTokens['expires_in'];
+                $newExpires = time() + (int)$newTokens['expires_in'];
+                $newRefreshToken = $newTokens['refresh_token'] ?? $tokenData['refresh_token'];
+                
                 $updateStmt->execute([
                     $newTokens['access_token'],
                     $newExpires,
-                    $newTokens['refresh_token'] ?? $tokenData['refresh_token'],
+                    $newRefreshToken,
                     $domain
                 ]);
                 
@@ -184,8 +217,11 @@ try {
                 
                 logError('Token refreshed successfully', [
                     'domain' => $domain,
-                    'expires_in' => $newTokens['expires_in']
+                    'expires_in' => $newTokens['expires_in'],
+                    'new_expires_at' => $newExpires,
+                    'refresh_token_updated' => isset($newTokens['refresh_token'])
                 ]);
+                
             } catch (PDOException $e) {
                 logError('Failed to update tokens in database', [
                     'error' => $e->getMessage(),
@@ -193,6 +229,7 @@ try {
                 ]);
                 throw new Exception("Failed to save new tokens");
             }
+            
         } catch (Exception $e) {
             logError('Token refresh error', [
                 'error' => $e->getMessage(),
@@ -216,10 +253,14 @@ try {
         $result = makeCurlRequest($apiUrl, 'POST', $apiParams);
         
         if ($result['http_code'] != 200) {
-            throw new Exception("API returned HTTP code: " . $result['http_code']);
+            throw new Exception("API returned HTTP code: " . $result['http_code'] . ", Response: " . $result['response']);
         }
         
         $apiResponse = json_decode($result['response'], true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new Exception("Invalid JSON response from API: " . json_last_error_msg());
+        }
         
         if (isset($apiResponse['error'])) {
             logError('API request failed', [
@@ -228,6 +269,11 @@ try {
                 'description' => $apiResponse['error_description'] ?? null,
                 'domain' => $domain
             ]);
+            
+            if (in_array($apiResponse['error'], ['expired_token', 'invalid_token']) && !$needTokenRefresh) {
+                logError('Token seems expired, forcing refresh', ['domain' => $domain]);
+            }
+            
             throw new Exception("API error: " . ($apiResponse['error_description'] ?? $apiResponse['error']));
         }
 
