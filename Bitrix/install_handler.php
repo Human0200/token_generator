@@ -26,8 +26,8 @@ try {
         'member_id' => $data['auth']['member_id'],
         'refresh_token' => $data['auth']['refresh_token'],
         'access_token' => $data['auth']['access_token'], 
-        'client_id' => 'local.686eb0f79751b8.18105975',
-        'client_secret' => 'Bv4yz5QFIgmdnFaDlt4KPuoGoA6R5AdCS54iT0wZSfpZCtVScd',
+        'client_id' => defined('C_REST_CLIENT_ID') ? C_REST_CLIENT_ID : '',
+        'client_secret' => defined('C_REST_CLIENT_SECRET') ? C_REST_CLIENT_SECRET : '',
         'expires' => $data['auth']['expires'] 
     ];
 
